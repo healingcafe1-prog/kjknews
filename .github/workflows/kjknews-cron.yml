@@ -1,0 +1,39 @@
+# KJKNEWS 외부 예약 실행
+#  - 5분마다 /api/cron/tick 호출 → 박영광 기자 자동 기사(06·12·19시 KST, 회차당 3건),
+#    언론사 피드 수집, SEO 점검, 여론광장 갱신, R2 백업
+#  - 서버가 50초 간격 제한·회차 잠금을 하므로 중복 호출해도 기사가 중복 작성되지 않음
+#  - GitHub는 60일간 저장소 활동이 없으면 예약 작업을 끄므로 매월 1일 keepalive 커밋
+name: kjknews-cron
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+    - cron: '17 3 1 * *'
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency:
+  group: kjknews-cron
+  cancel-in-progress: false
+jobs:
+  tick:
+    if: github.event.schedule != '17 3 1 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Call /api/cron/tick
+        run: |
+          for url in https://www.kjknews.com/api/cron/tick https://969a23ad-1af4-4a4d-bee1-ba265b2720b4.vip.gensparksite.com/api/cron/tick; do
+            code=$(curl -sS -o out.json -w '%{http_code}' --max-time 170 -H 'User-Agent: kjknews-cron' "$url" || echo 000)
+            echo "$url -> $code"; head -c 600 out.json || true; echo
+            if [ "$code" = "200" ]; then exit 0; fi
+          done
+          exit 1
+  keepalive:
+    if: github.event.schedule == '17 3 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          date -u +%Y-%m-%dT%H:%M:%SZ > .github/cron-keepalive
+          git config user.name kjknews-bot && git config user.email bot@kjknews.com
+          git add .github/cron-keepalive && git commit -m "chore: cron keepalive" && git push || true
